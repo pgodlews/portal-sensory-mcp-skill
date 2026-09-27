@@ -1,0 +1,21 @@
+{
+  "name": "portal-sensory-mcp",
+  "version": "0.1.0",
+  "description": "Model Context Protocol (MCP) server for Meta Portal sensory bridge (eyes & ears)",
+  "type": "module",
+  "main": "index.js",
+  "bin": {
+    "portal-sensory-mcp": "./index.js"
+  },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "author": "Piotr Godlewski",
+  "license": "MIT"
+}

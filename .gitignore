@@ -1,0 +1,43 @@
+# OS & IDE
+.DS_Store
+*.iml
+.idea/
+/.idea/
+.vscode/
+*.swp
+*.orig
+
+# Gradle build & Android
+.gradle
+android/.gradle/
+/build
+**/build/
+/local.properties
+android/local.properties
+.externalNativeBuild
+.cxx
+
+# Node
+mcp-server/node_modules/
+mcp-server/dist/
+package-lock.json.bak
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Captures & Sensor Media Recordings
+captures/
+**/captures/
+*.wav
+*.mp4
+
+# Artifacts & Secrets
+dist/
+*.apk
+*.aab
+*.log
+.env
+.env.*
+!.env.example
+*.keystore
+*.jks
