@@ -3,8 +3,11 @@ package dev.portalsensory.camera
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Matrix
+import android.graphics.RectF
 import android.graphics.SurfaceTexture
 import android.hardware.camera2.*
+import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.util.Log
@@ -76,20 +79,81 @@ class SensoryCameraEngine(
         }
     }
 
+    // Rotation management (Meta Portal Go is mounted at 270 deg, Portal+ is 0 deg)
+    val deviceDefaultRotation: Int
+        get() {
+            val device = Build.DEVICE.lowercase()
+            val model = Build.MODEL.lowercase()
+            return when {
+                device == "terry" || model.contains("go") -> 270
+                device == "cipher" -> 0
+                else -> 0
+            }
+        }
+
+    private val _rotationDegrees = MutableStateFlow(deviceDefaultRotation)
+    val rotationDegrees: StateFlow<Int> = _rotationDegrees
+
+    fun setRotation(degrees: Int) {
+        _rotationDegrees.value = degrees
+        activeTextureView?.let { tv ->
+            if (tv.isAvailable) {
+                tv.post {
+                    configureTransform(tv.width, tv.height)
+                }
+            }
+        }
+    }
+
+    fun configureTransform(viewWidth: Int, viewHeight: Int) {
+        val tv = activeTextureView ?: return
+        if (viewWidth <= 0 || viewHeight <= 0) return
+
+        val rotation = _rotationDegrees.value
+        val matrix = Matrix()
+
+        if (rotation == 90 || rotation == 270) {
+            val viewRect = RectF(0f, 0f, viewWidth.toFloat(), viewHeight.toFloat())
+            val bufferRect = RectF(0f, 0f, PREVIEW_HEIGHT.toFloat(), PREVIEW_WIDTH.toFloat())
+            val centerX = viewRect.centerX()
+            val centerY = viewRect.centerY()
+
+            bufferRect.offset(centerX - bufferRect.centerX(), centerY - bufferRect.centerY())
+            matrix.setRectToRect(viewRect, bufferRect, Matrix.ScaleToFit.FILL)
+
+            val scale = maxOf(
+                viewWidth.toFloat() / PREVIEW_HEIGHT,
+                viewHeight.toFloat() / PREVIEW_WIDTH
+            )
+            matrix.postScale(scale, scale, centerX, centerY)
+            matrix.postRotate(rotation.toFloat(), centerX, centerY)
+        } else if (rotation == 180) {
+            matrix.postRotate(180f, viewWidth / 2f, viewHeight / 2f)
+        }
+
+        tv.setTransform(matrix)
+        Log.i(TAG, "Configured TextureView transform: rotation=$rotation, view=${viewWidth}x${viewHeight}")
+    }
+
     @SuppressLint("MissingPermission")
     fun startCamera(textureView: TextureView, cameraId: String = CAMERA_ID_DEFAULT) {
         activeTextureView = textureView
         _activeCameraId.value = cameraId
 
         if (textureView.isAvailable) {
+            configureTransform(textureView.width, textureView.height)
             openCameraWithTexture(textureView.surfaceTexture!!, cameraId)
         } else {
             textureView.surfaceTextureListener = object : TextureView.SurfaceTextureListener {
                 override fun onSurfaceTextureAvailable(surface: SurfaceTexture, width: Int, height: Int) {
+                    configureTransform(width, height)
                     openCameraWithTexture(surface, _activeCameraId.value)
                 }
 
-                override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) {}
+                override fun onSurfaceTextureSizeChanged(surface: SurfaceTexture, width: Int, height: Int) {
+                    configureTransform(width, height)
+                }
+
                 override fun onSurfaceTextureDestroyed(surface: SurfaceTexture): Boolean {
                     closeCamera()
                     return true
@@ -101,11 +165,24 @@ class SensoryCameraEngine(
                         lastMjpegStreamTime = now
                         activeTextureView?.let { tv ->
                             try {
-                                val bm = tv.getBitmap(640, 360)
+                                val bm = tv.bitmap
                                 if (bm != null) {
+                                    val matrix = Matrix()
+                                    tv.getTransform(matrix)
+                                    val transformed = if (!matrix.isIdentity) {
+                                        val rot = Bitmap.createBitmap(bm, 0, 0, bm.width, bm.height, matrix, true)
+                                        if (rot != bm) bm.recycle()
+                                        rot
+                                    } else {
+                                        bm
+                                    }
+                                    val scaledW = 640
+                                    val scaledH = (640f * transformed.height / transformed.width).toInt()
+                                    val scaled = Bitmap.createScaledBitmap(transformed, scaledW, scaledH, true)
                                     val out = ByteArrayOutputStream()
-                                    bm.compress(Bitmap.CompressFormat.JPEG, 65, out)
-                                    bm.recycle()
+                                    scaled.compress(Bitmap.CompressFormat.JPEG, 65, out)
+                                    if (scaled != transformed) transformed.recycle()
+                                    scaled.recycle()
                                     latestPreviewJpeg = out.toByteArray()
                                 }
                             } catch (e: Exception) {
@@ -184,24 +261,46 @@ class SensoryCameraEngine(
 
     /**
      * Capture frame at requested resolution:
-     * - SMALL: 640x360, JPEG Q70 (~25-40 KB, low tokens)
-     * - FULL: 1280x720, JPEG Q95 (~200-350 KB, high detail)
+     * - SMALL: 640x400 (or scaled), JPEG Q70 (~25-40 KB, low tokens)
+     * - FULL: full native resolution, JPEG Q95 (~200-350 KB, high detail)
      */
     suspend fun captureFrame(resolution: Resolution): ByteArray = withContext(Dispatchers.IO) {
         val texture = activeTextureView
 
         if (texture != null && texture.isAvailable) {
             return@withContext withContext(Dispatchers.Main) {
-                val targetW = if (resolution == Resolution.SMALL) 640 else PREVIEW_WIDTH
-                val targetH = if (resolution == Resolution.SMALL) 360 else PREVIEW_HEIGHT
                 val quality = if (resolution == Resolution.SMALL) 70 else 95
 
-                val bitmap = texture.getBitmap(targetW, targetH)
+                val rawBitmap = texture.bitmap
                     ?: throw IllegalStateException("Failed to grab bitmap from TextureView")
 
+                val matrix = Matrix()
+                texture.getTransform(matrix)
+
+                val transformedBitmap = if (!matrix.isIdentity) {
+                    val rot = Bitmap.createBitmap(rawBitmap, 0, 0, rawBitmap.width, rawBitmap.height, matrix, true)
+                    if (rot != rawBitmap) rawBitmap.recycle()
+                    rot
+                } else {
+                    rawBitmap
+                }
+
+                val finalBitmap = if (resolution == Resolution.SMALL) {
+                    val scaleFactor = 0.5f
+                    val scaledW = (transformedBitmap.width * scaleFactor).toInt()
+                    val scaledH = (transformedBitmap.height * scaleFactor).toInt()
+                    val scaled = Bitmap.createScaledBitmap(transformedBitmap, scaledW, scaledH, true)
+                    if (scaled != transformedBitmap) {
+                        transformedBitmap.recycle()
+                    }
+                    scaled
+                } else {
+                    transformedBitmap
+                }
+
                 val stream = ByteArrayOutputStream()
-                bitmap.compress(Bitmap.CompressFormat.JPEG, quality, stream)
-                bitmap.recycle()
+                finalBitmap.compress(Bitmap.CompressFormat.JPEG, quality, stream)
+                finalBitmap.recycle()
                 return@withContext stream.toByteArray()
             }
         }

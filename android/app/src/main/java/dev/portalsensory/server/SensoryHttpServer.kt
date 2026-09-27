@@ -50,6 +50,7 @@ class SensoryHttpServer(
                 uri == "/capture/audio" && (method == Method.POST || method == Method.GET) -> handleCaptureAudio(params)
                 uri == "/capture/video" && (method == Method.POST || method == Method.GET) -> handleCaptureVideo(params)
                 uri == "/display/overlay" && method == Method.POST -> handleDisplayOverlay(session)
+                uri.startsWith("/camera/rotation") -> handleCameraRotation(params)
                 else -> newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "Not Found: $uri")
             }
         } catch (e: Exception) {
@@ -76,10 +77,11 @@ class SensoryHttpServer(
 
         val json = JSONObject().apply {
             put("status", "ok")
-            put("device", "Meta Portal+ (cipher)")
+            put("device", "${android.os.Build.MODEL} (${android.os.Build.DEVICE})")
             put("camera", JSONObject().apply {
                 put("active", cameraEngine.isCameraActive.value)
                 put("cameraId", cameraEngine.activeCameraId.value)
+                put("rotation", cameraEngine.rotationDegrees.value)
                 put("preview_width", SensoryCameraEngine.PREVIEW_WIDTH)
                 put("preview_height", SensoryCameraEngine.PREVIEW_HEIGHT)
                 put("available_resolutions", org.json.JSONArray(listOf("small", "full")))
@@ -100,6 +102,20 @@ class SensoryHttpServer(
         }
 
         return newFixedLengthResponse(Response.Status.OK, "application/json", json.toString(2))
+    }
+
+    private fun handleCameraRotation(params: Map<String, List<String>>): Response {
+        val degParam = params["degrees"]?.firstOrNull()?.toIntOrNull()
+            ?: params["deg"]?.firstOrNull()?.toIntOrNull()
+        if (degParam != null) {
+            val normalized = ((degParam % 360) + 360) % 360
+            cameraEngine.setRotation(normalized)
+        }
+        val reply = JSONObject().apply {
+            put("status", "ok")
+            put("rotation", cameraEngine.rotationDegrees.value)
+        }
+        return newFixedLengthResponse(Response.Status.OK, "application/json", reply.toString())
     }
 
     private fun handleCaptureFrame(params: Map<String, List<String>>): Response {

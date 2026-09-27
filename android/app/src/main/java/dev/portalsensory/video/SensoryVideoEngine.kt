@@ -2,6 +2,7 @@ package dev.portalsensory.video
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.Matrix
 import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
@@ -74,9 +75,25 @@ class SensoryVideoEngine(
             while (frameCount < totalFrames) {
                 val frameStartMs = System.currentTimeMillis()
 
-                // Grab frame from TextureView on Main thread
+                // Grab frame from TextureView on Main thread with transform applied
                 val bitmap = withContext(Dispatchers.Main) {
-                    texture.getBitmap(WIDTH, HEIGHT)
+                    val raw = texture.bitmap
+                    if (raw != null) {
+                        val matrix = Matrix()
+                        texture.getTransform(matrix)
+                        val transformed = if (!matrix.isIdentity) {
+                            val rot = Bitmap.createBitmap(raw, 0, 0, raw.width, raw.height, matrix, true)
+                            if (rot != raw) raw.recycle()
+                            rot
+                        } else {
+                            raw
+                        }
+                        val scaled = Bitmap.createScaledBitmap(transformed, WIDTH, HEIGHT, true)
+                        if (scaled != transformed) transformed.recycle()
+                        scaled
+                    } else {
+                        null
+                    }
                 }
 
                 if (bitmap != null) {
