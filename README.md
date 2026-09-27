@@ -127,6 +127,18 @@ It teaches the agent:
 
 ---
 
+## ⚠️ Security & Intended Environment
+
+> **Intended for Isolated Homelab & Workbench Environments Only**
+
+By design, Portal Sensory's embedded HTTP server (`:8765`) does **not** implement authentication, authorization, or TLS encryption. This prioritizes minimal latency and zero-friction integration for local AI coding agents without token management or certificate pinning.
+
+* **USB-C ADB Forwarding (Recommended):** Kept strictly local to `127.0.0.1` on your development host via `adb forward tcp:8765 tcp:8765`.
+* **Wi-Fi LAN Usage:** If accessing over your local network, ensure the Portal is placed on an isolated workbench or IoT VLAN.
+* **Warning:** **Never expose port `8765` to the public internet or untrusted networks.** Anyone with network access to the port can capture camera frames, record audio, and display messages on the screen.
+
+---
+
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
